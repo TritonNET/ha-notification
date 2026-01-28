@@ -1,4 +1,4 @@
-class CustomHaNotification extends HTMLElement {
+class TritonNetHaNotification extends HTMLElement {
     set hass(hass) {
         this._hass = hass;
     }
@@ -11,15 +11,42 @@ class CustomHaNotification extends HTMLElement {
         this._render();
     }
 
+    async _sendNotification(textField) {
+        const message = textField.value.trim();
+        if (!message) return;
+
+        const scriptEntity = this._config.notify[0].script;
+        let finalTitle = this._config.notify[0].title || "Announcement";
+
+        // Only perform replacement if {user} is present in the title
+        if (finalTitle.includes("{user}")) {
+            const userName = this._hass.user ? this._hass.user.name : "Admin";
+            finalTitle = finalTitle.replace(/{user}/g, userName);
+        }
+
+        const [domain, service] = scriptEntity.split('.');
+
+        try {
+            // Call service and await success
+            await this._hass.callService(domain, service, {
+                title: finalTitle,
+                message: message
+            });
+
+            // Clear the text box ONLY after successful script trigger
+            textField.value = '';
+        } catch (e) {
+            console.error("Failed to trigger notification script:", e);
+            // Text remains in the box if the service call fails
+        }
+    }
+
     _render() {
         if (this.content) return;
 
         this.attachShadow({ mode: 'open' });
         const card = document.createElement('ha-card');
-        this.content = document.createElement('div');
-        this.content.className = "card-content";
 
-        // Style to ensure button width matches text box width
         const style = document.createElement('style');
         style.textContent = `
       .container {
@@ -29,15 +56,17 @@ class CustomHaNotification extends HTMLElement {
         padding: 16px;
       }
       ha-textfield {
+        display: block;
         width: 100%;
+        /* Ensures the label/placeholder has full room to prevent "Mess..." truncation */
+        --mdc-text-field-label-ink-color: var(--secondary-text-color);
       }
       ha-button {
+        display: block;
         width: 100%;
+        height: 50px;
         --mdc-theme-primary: var(--primary-color);
-        height: 48px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        --mdc-button-horizontal-padding: 0px;
       }
     `;
 
@@ -45,29 +74,22 @@ class CustomHaNotification extends HTMLElement {
         container.className = "container";
 
         const textField = document.createElement('ha-textfield');
-        textField.label = "Message";
+        // We use label instead of placeholder to prevent truncation in narrow cards
+        textField.label = "Type message here...";
         textField.id = "message-input";
         textField.outlined = true;
 
         const button = document.createElement('ha-button');
         button.raised = true;
-        button.innerText = "Send";
+        button.innerText = "Send Announcement";
 
-        button.addEventListener('click', () => {
-            const message = textField.value;
-            const scriptEntity = this._config.notify[0].script;
-            const title = this._config.notify[0].title || "Announcement";
+        button.addEventListener('click', () => this._sendNotification(textField));
 
-            // Split 'script.name' into domain and service
-            const [domain, service] = scriptEntity.split('.');
-
-            this._hass.callService(domain, service, {
-                title: title,
-                message: message
-            });
-
-            // Feedback & Reset
-            textField.value = '';
+        // Support for hitting Enter to send
+        textField.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this._sendNotification(textField);
+            }
         });
 
         container.appendChild(textField);
@@ -75,6 +97,7 @@ class CustomHaNotification extends HTMLElement {
         card.appendChild(container);
         this.shadowRoot.appendChild(style);
         this.shadowRoot.appendChild(card);
+        this.content = container;
     }
 
     getCardSize() {
@@ -82,11 +105,13 @@ class CustomHaNotification extends HTMLElement {
     }
 }
 
-customElements.define('tritonnet-ha-notification', CustomHaNotification);
+customElements.define('tritonnet-ha-notification', TritonNetHaNotification);
 
+// Add to card picker
 window.customCards = window.customCards || [];
 window.customCards.push({
     type: "tritonnet-ha-notification",
-    name: "TritonNET HA Notification Card",
-    description: "A text notification card."
+    name: "TritonNet Notification Card",
+    preview: true,
+    description: "A styled text box and button for triggering house-wide scripts with user identification."
 });
